@@ -1,5 +1,5 @@
 {
-	"name": "df_gold_dim_fecha",
+	"name": "df_silver_to_gold_dim_fecha",
 	"properties": {
 		"folder": {
 			"name": "oro"
@@ -24,33 +24,29 @@
 					"name": "sink1"
 				}
 			],
-			"transformations": [
-				{
-					"name": "derivedColumn"
-				}
-			],
+			"transformations": [],
 			"scriptLines": [
 				"source(output(",
+				"          fecha_key as integer,",
 				"          fecha_completa as date,",
-				"          anio as integer,",
-				"          trimestre as integer,",
-				"          mes as integer,",
-				"          semana_anio as integer,",
-				"          dia_mes as integer,",
-				"          dia_semana as integer",
+				"          anio as short,",
+				"          trimestre as short,",
+				"          trimestre_nombre as string,",
+				"          mes as short,",
+				"          mes_nombre as string,",
+				"          mes_corto as string,",
+				"          semana_anio as short,",
+				"          dia_mes as short,",
+				"          dia_semana as short,",
+				"          dia_nombre as string,",
+				"          es_fin_de_semana as boolean",
 				"     ),",
 				"     allowSchemaDrift: true,",
 				"     validateSchema: false,",
 				"     isolationLevel: 'READ_UNCOMMITTED',",
-				"     query: 'SELECT c.d AS fecha_completa, YEAR(c.d) AS anio, DATEPART(QUARTER, c.d) AS trimestre, MONTH(c.d) AS mes, DATEPART(ISO_WEEK, c.d) AS semana_anio, DAY(c.d) AS dia_mes, ((DATEDIFF(DAY, DATEFROMPARTS(1900,1,1), c.d) % 7) + 1) AS dia_semana FROM (SELECT DATEADD(DAY, t.n, r.ini) AS d FROM (SELECT DATEFROMPARTS(YEAR(MIN(u.d)), 1, 1) AS ini, DATEFROMPARTS(YEAR(MAX(u.d)), 12, 31) AS fin FROM (SELECT admission_date AS d FROM silver.admissions UNION ALL SELECT discharge_date FROM silver.admissions UNION ALL SELECT payment_date FROM silver.billing) u) r CROSS APPLY (SELECT TOP (DATEDIFF(DAY, r.ini, r.fin) + 1) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1 AS n FROM sys.all_objects a CROSS JOIN sys.all_objects b) t) c',",
+				"     query: 'SELECT CAST(YEAR(f.d)*10000+MONTH(f.d)*100+DAY(f.d) AS INT) AS fecha_key, f.d AS fecha_completa, CAST(YEAR(f.d) AS SMALLINT) AS anio, CAST(DATEPART(QUARTER,f.d) AS SMALLINT) AS trimestre, \\'T\\'+CAST(DATEPART(QUARTER,f.d) AS VARCHAR(1)) AS trimestre_nombre, CAST(MONTH(f.d) AS SMALLINT) AS mes, CHOOSE(MONTH(f.d),\\'Enero\\',\\'Febrero\\',\\'Marzo\\',\\'Abril\\',\\'Mayo\\',\\'Junio\\',\\'Julio\\',\\'Agosto\\',\\'Septiembre\\',\\'Octubre\\',\\'Noviembre\\',\\'Diciembre\\') AS mes_nombre, CHOOSE(MONTH(f.d),\\'Ene\\',\\'Feb\\',\\'Mar\\',\\'Abr\\',\\'May\\',\\'Jun\\',\\'Jul\\',\\'Ago\\',\\'Sep\\',\\'Oct\\',\\'Nov\\',\\'Dic\\') AS mes_corto, CAST(DATEPART(ISO_WEEK,f.d) AS SMALLINT) AS semana_anio, CAST(DAY(f.d) AS SMALLINT) AS dia_mes, CAST(w.dow AS SMALLINT) AS dia_semana, CHOOSE(w.dow,\\'Lunes\\',\\'Martes\\',\\'Miércoles\\',\\'Jueves\\',\\'Viernes\\',\\'Sábado\\',\\'Domingo\\') AS dia_nombre, CAST(CASE WHEN w.dow IN (6,7) THEN 1 ELSE 0 END AS BIT) AS es_fin_de_semana FROM (SELECT DATEADD(DAY, n.n, r.ini) AS d FROM (SELECT DATEFROMPARTS(YEAR(MIN(x)),1,1) AS ini, DATEFROMPARTS(YEAR(MAX(x)),12,31) AS fin FROM (SELECT admission_date AS x FROM silver.admissions UNION ALL SELECT discharge_date FROM silver.admissions UNION ALL SELECT payment_date FROM silver.billing) u WHERE x IS NOT NULL) r CROSS APPLY (SELECT TOP (DATEDIFF(DAY,r.ini,r.fin)+1) CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL))-1 AS INT) AS n FROM sys.all_objects a CROSS JOIN sys.all_objects b) n) f CROSS APPLY (SELECT (DATEDIFF(DAY,\\'19000101\\',f.d)%7)+1 AS dow) w',",
 				"     format: 'query') ~> source1",
-				"source1 derive(fecha_key = toInteger(toString(fecha_completa,'yyyyMMdd')),",
-				"          trimestre_nombre = concat('T',toString(trimestre)),",
-				"          mes_nombre = case(mes==1,'Enero', mes==2,'Febrero', mes==3,'Marzo', mes==4,'Abril', mes==5,'Mayo', mes==6,'Junio', mes==7,'Julio', mes==8,'Agosto', mes==9,'Septiembre', mes==10,'Octubre', mes==11,'Noviembre', 'Diciembre'),",
-				"          mes_corto = case(mes==1,'Ene', mes==2,'Feb', mes==3,'Mar', mes==4,'Abr', mes==5,'May', mes==6,'Jun', mes==7,'Jul', mes==8,'Ago', mes==9,'Sep', mes==10,'Oct', mes==11,'Nov', 'Dic'),",
-				"          dia_nombre = case(dia_semana==1,'Lunes', dia_semana==2,'Martes', dia_semana==3,'Miércoles', dia_semana==4,'Jueves', dia_semana==5,'Viernes', dia_semana==6,'Sábado', 'Domingo'),",
-				"          es_fin_de_semana = dia_semana>=6) ~> derivedColumn",
-				"derivedColumn sink(allowSchemaDrift: true,",
+				"source1 sink(allowSchemaDrift: true,",
 				"     validateSchema: false,",
 				"     input(",
 				"          fecha_key as integer,",
@@ -72,9 +68,25 @@
 				"     updateable:false,",
 				"     upsertable:false,",
 				"     format: 'table',",
+				"     preSQLs:['DELETE FROM gold.fact_facturacion','DELETE FROM gold.fact_admisiones','DELETE FROM gold.dim_fecha'],",
 				"     skipDuplicateMapInputs: true,",
 				"     skipDuplicateMapOutputs: true,",
-				"     errorHandlingOption: 'stopOnFirstError') ~> sink1"
+				"     errorHandlingOption: 'stopOnFirstError',",
+				"     mapColumn(",
+				"          fecha_key,",
+				"          fecha_completa,",
+				"          anio,",
+				"          trimestre,",
+				"          trimestre_nombre,",
+				"          mes,",
+				"          mes_nombre,",
+				"          mes_corto,",
+				"          semana_anio,",
+				"          dia_mes,",
+				"          dia_semana,",
+				"          dia_nombre,",
+				"          es_fin_de_semana",
+				"     )) ~> sink1"
 			]
 		}
 	}
